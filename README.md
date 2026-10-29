@@ -42,7 +42,7 @@ offset), 10 s windows:
 | Marilyn Manson, Antwerp 5:00-11:00 | 40 / 110 | 88 / 110 | 49 → 4 |
 | Marilyn Manson, Newcastle 15:00-25:00 | 68 / 194 | 168 / 194 | 93 → 2 |
 | Bad Omens 2:30-22:30 | 239 / 380 | 286 / 380 | 108 → 9 |
-| FIR 2:30-22:30 | 219 / 385 | 313 / 385 | 146 → 11 |
+| Falling in Reverse 2:30-22:30 | 219 / 385 | 313 / 385 | 146 → 11 |
 | Ice Nine Kills 2:30-22:30 | 164 / 291 | 246 / 291 | 100 → 4 |
 
 Lock-in takes 2 to 6 steps after a song starts, up to 13 when the live intro differs from the
