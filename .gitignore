@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pt
+*.wav
+*.mp3
+*.m4a
+*.flac
+*.aiff
+*.ogg

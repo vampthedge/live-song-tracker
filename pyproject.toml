@@ -1,0 +1,19 @@
+[project]
+name = "live-song-tracker"
+version = "0.1.0"
+description = "Follow a live concert recording through the band's studio recordings: which song, and where in it"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dependencies = [
+  "huggingface-hub>=0.36",
+  "safetensors>=0.4",
+  "timm>=1.0.30",
+  "torch>=2.4",
+  "torchaudio>=2.11",
+  "torchcodec>=0.17",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.3"]
