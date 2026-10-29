@@ -11,6 +11,9 @@ live 5:36  disposable_teens at 0:11 (11.4s) confidence 0.35  [setlist: disposabl
 live 5:39  disposable_teens at 0:14 (14.3s) confidence 0.35  [setlist: disposable_teens at 0:19]
 ```
 
+A visual walkthrough with figures from a real concert: https://vampthedge.github.io/live-song-tracker/
+(source in [docs/index.html](docs/index.html)).
+
 ## How it works
 
 1. **Embed.** [PupuM2D-Large](https://huggingface.co/spellbrush/PupuM2D), a self-supervised music
@@ -50,15 +53,24 @@ Tried and dropped: searching only near the last position (it parks on magnets fo
 the studio side 0.9 to 1.1 for tempo, penalizing magnet sticks by their average similarity to the
 library, and resetting evidence when the pooled best song disagrees.
 
-## Run it
+## Install
 
 ```bash
-uv sync
-uv run python live_song_tracker.py --library studio/ --live show.wav --cache studio.pt
+pip install git+https://github.com/vampthedge/live-song-tracker
+# or, in a uv project
+uv add git+https://github.com/vampthedge/live-song-tracker
 ```
 
-The first run downloads the model checkpoint (3.4 GB) and embeds every studio song; `--cache` keeps the
-embeddings for later runs. CUDA, Apple MPS and CPU all work.
+Python 3.11+. The first run downloads the PupuM2D checkpoint from Hugging Face (3.4 GB). CUDA,
+Apple MPS and CPU all work. No audio, setlists or lyrics ship with this package; bring your own.
+
+## Command line
+
+```bash
+live-song-tracker --library studio/ --live show.wav --cache studio.pt
+```
+
+Embedding the studio songs takes a while; `--cache` keeps the embeddings for later runs.
 
 | option | |
 |---|---|
@@ -68,7 +80,58 @@ embeddings for later runs. CUDA, Apple MPS and CPU all work.
 | `--lyrics` | folder of `<song>.json` files from the [lrclib.net](https://lrclib.net) API (`/api/get`), to print the line being sung |
 | `--start`, `--steps` | live second to start at, and how many 3 s steps to run |
 
-No audio, setlists or lyrics ship with this repository; bring your own.
+## Python
+
+```python
+from live_song_tracker import MODEL_SAMPLE_RATE, STEP_SECONDS, WINDOW_SECONDS, Tracker, build_library, load_audio, load_model
+
+model = load_model()  # or load_model("cpu")
+library = build_library("studio/", model, cache="studio.pt")
+tracker = Tracker(model, library)  # one Tracker per live performance
+
+live = load_audio("show.wav")  # mono float tensor at MODEL_SAMPLE_RATE (24 kHz)
+window, step = WINDOW_SECONDS * MODEL_SAMPLE_RATE, STEP_SECONDS * MODEL_SAMPLE_RATE
+for start in range(0, len(live) - window, step):
+    match = tracker.step(live[start : start + window])
+    if match and match.sure:
+        print(match.song, match.second, match.confidence)
+```
+
+`Tracker.step` expects the last 10 s of audio, once every 3 s, in order. For a microphone or stream,
+keep a 10 s buffer of 24 kHz mono samples and call `step` every 3 s. It returns `None` when nothing
+in the library sounds like the window, otherwise a `Match(song, second, confidence, sure)`. Show a
+position or lyric only when `sure` is true. `load_lyrics(path)` and `lyric_at(lines, second)` turn an
+lrclib.net JSON file into the line sung at that second.
+
+## Add it to your project with an AI coding assistant
+
+Paste this into Claude Code, Cursor, Codex or similar, inside your project:
+
+```text
+Add live song recognition to this project with the live-song-tracker library
+(https://github.com/vampthedge/live-song-tracker, MIT license). Read its README first.
+
+1. Install it as a dependency with this project's package manager, e.g.
+   `uv add git+https://github.com/vampthedge/live-song-tracker` or
+   `pip install git+https://github.com/vampthedge/live-song-tracker`. It needs Python 3.11+.
+2. Import it; do not copy its source into this project. The API:
+   - load_model(device=None) -> model. Downloads a 3.4 GB checkpoint on first use.
+   - build_library(folder, model, cache="library.pt") -> library. The folder holds one studio
+     recording per song; the file name is the song name.
+   - Tracker(model, library).step(window) -> Match(song, second, confidence, sure) or None.
+     window is the last 10 s of mono audio at 24 kHz as a 1D torch tensor; call it every 3 s.
+   - load_audio(path) decodes any audio file to that format.
+   - load_lyrics(path) and lyric_at(lines, second) read lrclib.net synced-lyrics JSON.
+3. Feed the tracker from wherever this project gets audio (a file, a microphone, a stream):
+   keep a 10 s buffer, call step every 3 s, and show a song position or lyric only when
+   match.sure is true.
+4. Ask me where my studio recordings are. Do not download music from YouTube or other sites.
+5. Add a test that cuts a 10 s clip from one of my studio recordings, feeds it to a Tracker
+   three times 3 s apart, and checks the song name. Run it.
+6. Commit the change on a new git branch and show me the diff summary.
+```
+
+## Tests
 
 ```bash
 uv run pytest

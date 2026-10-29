@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Live Song Tracker</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="How live-song-tracker follows a concert through a band's studio recordings, and what it adds on top of the PupuM2D music encoder.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=IBM+Plex+Sans:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column, figures break out to a wider measure; stage-light magenta for the tracker, teal for reference lines. */
+:root {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --fg: #16171d;
+  --muted: #5a5f6e;
+  --rule: #d9dbe2;
+  --accent: #b5175a;
+  --ref: #0b7a7e;
+  --code-bg: #eceef2;
+  --display: "Big Shoulders Display", "Arial Narrow", Impact, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101217; --surface: #171a21; --fg: #e7e9ef; --muted: #9ba1b0; --rule: #2a2e38;
+    --accent: #f0619a; --ref: #4cc2bf; --code-bg: #1c2029; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101217; --surface: #171a21; --fg: #e7e9ef; --muted: #9ba1b0; --rule: #2a2e38;
+  --accent: #f0619a; --ref: #4cc2bf; --code-bg: #1c2029; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 17px/1.6 var(--body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+main { max-width: 760px; margin: 0 auto; padding-block: 48px 72px; display: grid; gap: 56px; }
+section { display: grid; gap: 16px; min-width: 0; }
+h1, h2 { font-family: var(--display); font-weight: 800; line-height: 1; margin: 0; text-wrap: balance; letter-spacing: 0.01em; }
+h1 { font-size: clamp(3rem, 11vw, 5.5rem); text-transform: uppercase; }
+h2 { font-size: clamp(1.9rem, 6vw, 2.6rem); text-transform: uppercase; }
+h3 { font-size: 1.05rem; margin: 0; }
+p { margin: 0; max-width: 65ch; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lede { font-size: 1.2rem; color: var(--fg); }
+.eyebrow { font: 500 0.78rem/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.muted { color: var(--muted); }
+code, pre { font-family: var(--mono); font-size: 0.86rem; }
+:not(pre) > code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 4px; }
+pre { margin: 0; background: var(--code-bg); padding: 16px; border-radius: 8px; overflow-x: auto; line-height: 1.5; }
+.list { margin: 0; padding-left: 1.2em; display: grid; gap: 8px; max-width: 65ch; }
+
+.terminal { background: var(--surface); border: 1px solid var(--rule); }
+.terminal .hit { color: var(--accent); }
+.terminal .ref { color: var(--ref); }
+
+.compare { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.compare > div { min-width: 0; display: grid; gap: 10px; align-content: start; }
+.compare ul { margin: 0; padding-left: 1.1em; display: grid; gap: 8px; }
+.compare .ours { border-left: 3px solid var(--accent); padding-left: 16px; }
+.compare .theirs { border-left: 3px solid var(--rule); padding-left: 16px; }
+@media (max-width: 640px) { .compare { grid-template-columns: 1fr; } }
+
+.steps { counter-reset: step; display: grid; gap: 40px; }
+.step { display: grid; gap: 12px; min-width: 0; }
+.step h3 { font-family: var(--display); font-size: 1.6rem; text-transform: uppercase; letter-spacing: 0.02em; display: flex; gap: 12px; align-items: baseline; }
+.step h3::before { counter-increment: step; content: counter(step); font: 500 0.9rem var(--mono); color: var(--accent); }
+
+figure { margin: 0; display: grid; gap: 8px; min-width: 0; }
+figcaption { font-size: 0.88rem; color: var(--muted); max-width: 65ch; }
+.chart { overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 12px; }
+.chart svg { display: block; width: 100%; height: auto; min-width: 480px; }
+.chart text { fill: var(--muted); font: 11px var(--mono); }
+.chart .lbl { fill: var(--fg); }
+.axis { stroke: var(--rule); stroke-width: 1; }
+.panels { display: grid; gap: 12px; }
+.panel-title { font: 500 0.8rem var(--mono); color: var(--muted); }
+.panel-title strong { color: var(--fg); font-weight: 500; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font: 0.8rem var(--mono); color: var(--muted); }
+.legend span::before { content: ""; display: inline-block; width: 14px; height: 3px; margin-right: 6px; vertical-align: middle; background: currentColor; }
+.legend .l-track { color: var(--accent); }
+.legend .l-single { color: var(--muted); }
+.legend .l-ref { color: var(--ref); }
+
+.results { display: grid; gap: 14px; }
+.show { display: grid; grid-template-columns: minmax(0, 14rem) minmax(0, 1fr); gap: 4px 16px; align-items: center; }
+.show-name { font-size: 0.92rem; }
+.bars { display: grid; gap: 4px; }
+.bar { position: relative; height: 18px; background: var(--code-bg); border-radius: 3px; }
+.bar i { position: absolute; inset: 0 auto 0 0; border-radius: 3px; }
+.bar.single i { background: var(--muted); opacity: 0.55; }
+.bar.track i { background: var(--accent); }
+.bar b { position: absolute; right: 6px; top: 0; font: 500 0.72rem/18px var(--mono); font-variant-numeric: tabular-nums; color: var(--fg); }
+@media (max-width: 560px) { .show { grid-template-columns: 1fr; } }
+
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: left; padding: 8px 10px 8px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font: 500 0.75rem var(--mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.table-wrap { overflow-x: auto; }
+
+.prompt-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+button {
+  font: 600 0.9rem var(--body); color: var(--bg); background: var(--fg);
+  border: 0; border-radius: 6px; padding: 8px 14px; cursor: pointer;
+}
+button:hover { background: var(--accent); }
+.prompt pre { white-space: pre-wrap; }
+footer { border-top: 1px solid var(--rule); padding-top: 20px; font-size: 0.88rem; color: var(--muted); display: grid; gap: 8px; }
+@media (prefers-reduced-motion: no-preference) { button { transition: background 0.15s; } }
+</style>
+</head>
+<body>
+<main>
+
+<header style="display:grid;gap:20px">
+  <span class="eyebrow">Open source · MIT · PyTorch</span>
+  <h1>Live Song Tracker</h1>
+  <p class="lede">Point it at a band's studio recordings and a recording of one of their concerts. Every 3 seconds it says which song is playing and where in the studio version the band is, so an app can show the lyric being sung right now.</p>
+  <pre class="terminal" aria-label="Example output on a 2025 Antwerp concert"><span class="muted">$ live-song-tracker --library studio/ --live antwerp_2025.wav</span>
+live 5:36  <span class="hit">disposable_teens at 0:11</span> (11.4s) confidence 0.35  <span class="ref">[setlist: disposable_teens at 0:16]</span>
+live 5:39  <span class="hit">disposable_teens at 0:14</span> (14.3s) confidence 0.35  <span class="ref">[setlist: disposable_teens at 0:19]</span>
+live 5:42  <span class="hit">disposable_teens at 0:17</span> (17.2s) confidence 0.37  <span class="ref">[setlist: disposable_teens at 0:22]</span>
+live 5:45  <span class="hit">disposable_teens at 0:20</span> (20.5s) confidence 0.41  <span class="ref">[setlist: disposable_teens at 0:25]</span></pre>
+  <p class="muted" style="font-size:0.9rem">The setlist column is a hand-written estimate of when each song started. Those estimates can be off by up to 20 s, which is why it runs about 5 s ahead here.</p>
+</header>
+
+<section aria-labelledby="pupu">
+  <span class="eyebrow">What it builds on</span>
+  <h2 id="pupu">PupuM2D, and what this adds</h2>
+  <p><a href="https://github.com/sizigi/PupuM2D">PupuM2D</a> (Gu et al., 2026) is a self-supervised music encoder. It is very good at turning audio into vectors. It has no idea what a song, a library or a concert is. Everything that turns those vectors into "this song, at this second" lives here.</p>
+  <div class="compare">
+    <div class="theirs">
+      <h3>PupuM2D gives you</h3>
+      <ul>
+        <li>An encoder in six sizes, 5M to 1.1B parameters, trained on 30 s clips at 24 kHz.</li>
+        <li>25 vectors per second of audio, each covering 8 frequency bands.</li>
+        <li>Training code, with checkpoints meant to sit inside its own repository.</li>
+        <li>No song identity, no time alignment, no live input.</li>
+      </ul>
+    </div>
+    <div class="ours">
+      <h3>This project adds</h3>
+      <ul>
+        <li>A standalone loader: <code>pip install</code>, pinned Hugging Face revision, teacher weights only, no training repo.</li>
+        <li>Position encoding that keeps the training spacing on clips shorter than 30 s.</li>
+        <li>Half-second "sticks", library-mean centering and diagonal alignment against every studio song.</li>
+        <li>An evidence tracker that follows the band through the song instead of guessing each window from scratch.</li>
+        <li>A jump margin and a confidence gate, so wrong guesses are rare and flagged.</li>
+        <li>A command line tool, a Python API, setlist checks and synced lyrics.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="how">
+  <span class="eyebrow">Pipeline</span>
+  <h2 id="how">How it works</h2>
+  <div class="steps">
+
+    <div class="step">
+      <h3>Embed</h3>
+      <p>Every studio song is cut into 10 s windows and run through PupuM2D-Large once, up front. The model output averages layers 12 to 24, as the paper recommends. Each window gives 250 frames, one every 40 ms. Live audio goes through the same model: the last 10 s, every 3 s.</p>
+      <p>The model was trained on 30 s inputs, and timm spreads whatever it receives over the same position range, so a 10 s input would look like a slowed-down 30 s one. The loader crops the 30 s position grid instead, so neighbouring frames sit as far apart as they did in training.</p>
+    </div>
+
+    <div class="step">
+      <h3>Cut into sticks</h3>
+      <p>Twelve frames are averaged into one 0.48 s stick. That is short enough to place a lyric line and long enough to smooth out single drum hits. A 10 s window holds 20 sticks; the last 10 frames are dropped.</p>
+      <figure>
+        <div class="chart"><svg id="sticks" viewBox="0 0 640 96" role="img" aria-label="A 10 second window of 250 frames divided into 20 sticks of 12 frames, with the last 10 frames dropped"></svg></div>
+        <figcaption>One 10 s window: 250 frames at 25 per second become 20 sticks of 12 frames (0.48 s each). The grey tail is the 0.4 s that does not fill a stick.</figcaption>
+      </figure>
+    </div>
+
+    <div class="step">
+      <h3>Center</h3>
+      <p>Every stick of every rock song points roughly the same way, so the raw cosine similarity between any two sticks is about 0.7 and the right moment barely stands out. Subtracting the library's average stick, then normalizing again, keeps only what makes one moment different from the rest. On one show this raised how often the true position was the single best match from 44% to 57%.</p>
+      <figure>
+        <div class="chart panels">
+          <div class="panel-title"><strong>Raw</strong> · mean 0.67, true diagonal 0.73</div>
+          <svg id="heat-raw" viewBox="0 0 640 128" role="img" aria-label="Raw similarity heatmap: almost uniform, the diagonal is faint"></svg>
+          <div class="panel-title"><strong>Centered</strong> · mean 0.19, true diagonal 0.35</div>
+          <svg id="heat-centered" viewBox="0 0 640 128" role="img" aria-label="Centered similarity heatmap: a clear diagonal stripe at the true position"></svg>
+        </div>
+        <figcaption>Real data: the 20 live sticks from Antwerp 5:39 (rows) against the first minute of the studio <i>Disposable Teens</i> (columns). Each panel uses its own color scale from its lowest to its highest value. The dashed diagonal is where the tracker placed this window, 0:14 in the studio song.</figcaption>
+      </figure>
+    </div>
+
+    <div class="step">
+      <h3>Align</h3>
+      <p>The 20 live sticks slide along each studio song, one stick at a time. Every start position gets a score: the average similarity along that diagonal, live stick 1 against studio stick <i>s</i>, live stick 2 against <i>s</i>&nbsp;+&nbsp;1, and so on. That is the stripe you can see in the centered heatmap.</p>
+    </div>
+
+    <div class="step">
+      <h3>Track</h3>
+      <p>Songs repeat themselves. A single window often fits a later chorus better than the one being played, so picking each window's best start on its own makes the position jump around. The tracker keeps an evidence score for every studio stick of every song. Each step it does three things:</p>
+      <ol class="list">
+        <li>Shifts the evidence 6 sticks forward, because the concert moved on 3 s.</li>
+        <li>Multiplies it by 0.9, so an old mistake fades within a few steps.</li>
+        <li>Adds the new window's alignment scores.</li>
+      </ol>
+      <p>A wrong repeat scores high once, but its shifted evidence does not line up with where the next window scores high. The true position scores high at the same shifted spot step after step.</p>
+      <figure>
+        <div class="chart">
+          <div class="legend" style="margin-bottom:8px"><span class="l-track">tracker</span><span class="l-single">one window alone</span><span class="l-ref">setlist estimate</span></div>
+          <svg id="positions" viewBox="0 0 640 300" role="img" aria-label="Studio position over live time: the single-window picks jump between 0:08 and 2:39, the tracker locks in at 0:11 after two steps and then moves forward 3 seconds per step"></svg>
+        </div>
+        <figcaption>Real data, Antwerp 5:30 to 5:51. The tracker needs two steps to leave a wrong chorus at 2:39, then advances 3 s per step. One window alone lands on 0:08, 1:08 and 1:11, and later stalls around 0:20 while the band keeps playing.</figcaption>
+      </figure>
+    </div>
+
+    <div class="step">
+      <h3>Gate</h3>
+      <p>Two rules decide what the tracker reports.</p>
+      <ul class="list">
+        <li><strong>Jump margin.</strong> Last step's pick moved on by 3 s is where we expect to be now. A pick somewhere else, in another song or more than 6 s away, has to beat the evidence at that spot by 10%.</li>
+        <li><strong>Confidence.</strong> The evidence divided by its total weight is the average window similarity it stands for. Correct picks sit around 0.33 to 0.45. Wrong ones usually land on magnets, studio moments that match almost anything, at 0.15 to 0.25. Below 0.3 a match comes back with <code>sure=False</code> and an app should show ♪ instead of a lyric.</li>
+      </ul>
+    </div>
+
+  </div>
+</section>
+
+<section aria-labelledby="results">
+  <span class="eyebrow">Measured offline</span>
+  <h2 id="results">Results on five shows</h2>
+  <p>Share of 3 s steps where the reported position is within 3 s of the truth. Truth is the setlist start plus an offset fitted per song. A fitted tempo came out at 1.00 for every song, so live tempo was never the problem.</p>
+  <div class="legend"><span class="l-track">evidence tracker</span><span class="l-single">one window alone</span></div>
+  <div class="results" id="results-bars"></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Show</th><th>Jumps over 6 s, one window</th><th>Jumps, tracker</th></tr></thead>
+      <tbody id="jumps"></tbody>
+    </table>
+  </div>
+  <p class="muted">With the 0.3 gate, 81 to 95% of correct picks are shown and 80 to 100% of wrong ones are hidden, on all five shows.</p>
+</section>
+
+<section aria-labelledby="limits">
+  <span class="eyebrow">Know before you use it</span>
+  <h2 id="limits">Limits</h2>
+  <ul class="list">
+    <li>Lock-in takes 2 to 6 steps after a song starts, and up to 13 when the live intro differs from the studio one.</li>
+    <li>Live outros that run past the end of the studio song park on a magnet until the next song starts.</li>
+    <li>It recognizes the songs you give it. Covers, medleys and songs missing from the library are not found.</li>
+    <li>PupuM2D-Large has 307M parameters. One 10 s window every 3 s runs comfortably on a laptop GPU or Apple silicon; CPU works but slowly.</li>
+    <li>Tried and dropped: searching only near the last position (it parks on magnets for good), stretching the studio side 0.9 to 1.1 for tempo, penalizing magnet sticks, and resetting evidence when the per-song score disagrees.</li>
+  </ul>
+</section>
+
+<section aria-labelledby="use">
+  <span class="eyebrow">Use it</span>
+  <h2 id="use">Install and run</h2>
+  <pre>pip install git+https://github.com/vampthedge/live-song-tracker
+
+live-song-tracker --library studio/ --live show.wav --cache studio.pt</pre>
+  <p>Or from Python, with audio from a file, a microphone or a stream:</p>
+  <pre>from live_song_tracker import Tracker, build_library, load_model
+
+model = load_model()
+tracker = Tracker(model, build_library("studio/", model, cache="studio.pt"))
+
+match = tracker.step(last_10_seconds)  # mono, 24 kHz, once every 3 s
+if match and match.sure:
+    print(match.song, match.second)</pre>
+  <p class="muted">No audio, setlists or lyrics ship with the package. Bring your own studio recordings; synced lyrics come from <a href="https://lrclib.net">lrclib.net</a>.</p>
+</section>
+
+<section aria-labelledby="ai" class="prompt">
+  <div class="prompt-head">
+    <h2 id="ai">Add it with an AI assistant</h2>
+    <button type="button" id="copy-prompt">Copy prompt</button>
+  </div>
+  <p>Paste this into Claude Code, Cursor, Codex or a similar assistant, inside your own project.</p>
+  <pre id="prompt-text">Add live song recognition to this project with the live-song-tracker library
+(https://github.com/vampthedge/live-song-tracker, MIT license). Read its README first.
+
+1. Install it as a dependency with this project's package manager, e.g.
+   `uv add git+https://github.com/vampthedge/live-song-tracker` or
+   `pip install git+https://github.com/vampthedge/live-song-tracker`. It needs Python 3.11+.
+2. Import it; do not copy its source into this project. The API:
+   - load_model(device=None) -&gt; model. Downloads a 3.4 GB checkpoint on first use.
+   - build_library(folder, model, cache="library.pt") -&gt; library. The folder holds one studio
+     recording per song; the file name is the song name.
+   - Tracker(model, library).step(window) -&gt; Match(song, second, confidence, sure) or None.
+     window is the last 10 s of mono audio at 24 kHz as a 1D torch tensor; call it every 3 s.
+   - load_audio(path) decodes any audio file to that format.
+   - load_lyrics(path) and lyric_at(lines, second) read lrclib.net synced-lyrics JSON.
+3. Feed the tracker from wherever this project gets audio (a file, a microphone, a stream):
+   keep a 10 s buffer, call step every 3 s, and show a song position or lyric only when
+   match.sure is true.
+4. Ask me where my studio recordings are. Do not download music from YouTube or other sites.
+5. Add a test that cuts a 10 s clip from one of my studio recordings, feeds it to a Tracker
+   three times 3 s apart, and checks the song name. Run it.
+6. Commit the change on a new git branch and show me the diff summary.</pre>
+</section>
+
+<footer>
+  <span><a href="https://github.com/vampthedge/live-song-tracker">github.com/vampthedge/live-song-tracker</a> · MIT license</span>
+  <span>Model classes adapted from <a href="https://github.com/sizigi/PupuM2D">sizigi/PupuM2D</a> (MIT). Please cite <a href="https://arxiv.org/abs/2606.25713">Frequency-Aware Self-Supervised Music Representation Learning</a> if you use this.</span>
+</footer>
+
+</main>
+
+<script id="figure-data" type="application/json">{"heat":{"raw":[[0.17,0.36,0.59,0.58,0.54,0.65,0.65,0.57,0.63,0.56,0.59,0.59,0.64,0.63,0.59,0.59,0.6,0.61,0.6,0.62,0.73,0.63,0.67,0.59,0.61,0.61,0.66,0.68,0.62,0.6,0.6,0.61,0.59,0.61,0.66,0.58,0.53,0.67,0.6,0.51,0.68,0.7,0.57,0.62,0.68,0.61,0.67,0.69,0.7,0.63,0.6,0.68,0.61,0.58,0.6,0.63,0.65,0.59,0.62,0.67,0.7,0.71,0.71,0.64,0.6,0.68,0.66,0.58,0.58,0.61,0.64,0.56,0.62,0.63,0.58,0.63,0.65,0.74,0.74,0.71,0.74,0.69,0.64,0.66,0.74,0.72,0.7,0.67,0.65,0.61,0.61,0.68,0.64,0.59,0.67,0.64,0.6,0.55,0.61,0.63,0.65,0.73,0.68,0.66,0.66,0.68,0.64,0.57,0.62,0.62,0.6,0.56,0.6,0.64,0.62,0.62,0.69,0.65,0.65,0.65],[0.18,0.37,0.6,0.6,0.57,0.67,0.64,0.59,0.63,0.62,0.61,0.6,0.62,0.65,0.6,0.59,0.64,0.62,0.62,0.58,0.68,0.63,0.66,0.65,0.62,0.62,0.64,0.7,0.63,0.61,0.65,0.63,0.62,0.6,0.66,0.59,0.55,0.68,0.65,0.52,0.62,0.72,0.57,0.62,0.72,0.64,0.69,0.69,0.72,0.62,0.59,0.67,0.65,0.57,0.6,0.61,0.67,0.59,0.6,0.68,0.65,0.68,0.71,0.64,0.6,0.67,0.69,0.57,0.58,0.59,0.67,0.56,0.61,0.64,0.6,0.64,0.66,0.74,0.74,0.75,0.73,0.68,0.67,0.62,0.78,0.71,0.73,0.69,0.7,0.66,0.59,0.66,0.62,0.6,0.66,0.67,0.6,0.57,0.59,0.66,0.6,0.7,0.7,0.66,0.66,0.69,0.65,0.59,0.63,0.65,0.59,0.56,0.57,0.68,0.59,0.63,0.69,0.66,0.65,0.64],[0.14,0.34,0.57,0.57,0.54,0.64,0.67,0.57,0.62,0.57,0.63,0.59,0.62,0.65,0.62,0.59,0.6,0.64,0.6,0.6,0.68,0.61,0.65,0.6,0.65,0.61,0.65,0.69,0.66,0.61,0.61,0.65,0.61,0.61,0.64,0.56,0.51,0.68,0.62,0.51,0.59,0.67,0.55,0.6,0.7,0.61,0.69,0.72,0.71,0.62,0.58,0.68,0.62,0.58,0.58,0.62,0.65,0.59,0.6,0.67,0.62,0.68,0.69,0.62,0.59,0.67,0.66,0.57,0.57,0.62,0.65,0.57,0.6,0.64,0.59,0.63,0.66,0.73,0.77,0.75,0.67,0.68,0.63,0.63,0.74,0.76,0.72,0.69,0.69,0.66,0.61,0.66,0.62,0.57,0.67,0.65,0.61,0.54,0.6,0.64,0.55,0.7,0.66,0.66,0.67,0.68,0.64,0.56,0.63,0.62,0.6,0.54,0.58,0.65,0.6,0.61,0.69,0.65,0.66,0.65],[0.16,0.37,0.59,0.6,0.58,0.67,0.62,0.57,0.6,0.58,0.58,0.6,0.63,0.64,0.59,0.57,0.61,0.61,0.62,0.62,0.64,0.59,0.62,0.6,0.59,0.63,0.65,0.69,0.61,0.6,0.62,0.62,0.62,0.63,0.65,0.58,0.55,0.67,0.64,0.54,0.6,0.68,0.57,0.62,0.69,0.63,0.69,0.7,0.72,0.62,0.59,0.65,0.62,0.57,0.6,0.63,0.65,0.59,0.62,0.66,0.61,0.65,0.69,0.65,0.62,0.68,0.66,0.58,0.61,0.61,0.65,0.56,0.63,0.63,0.6,0.65,0.66,0.74,0.72,0.73,0.66,0.63,0.64,0.61,0.76,0.69,0.72,0.67,0.68,0.65,0.64,0.69,0.6,0.6,0.66,0.64,0.59,0.58,0.61,0.65,0.59,0.68,0.69,0.64,0.66,0.68,0.63,0.59,0.62,0.64,0.6,0.58,0.59,0.66,0.6,0.62,0.66,0.64,0.64,0.65],[0.11,0.35,0.57,0.59,0.56,0.68,0.67,0.57,0.64,0.56,0.61,0.64,0.69,0.65,0.6,0.6,0.6,0.63,0.63,0.69,0.68,0.6,0.66,0.57,0.63,0.65,0.72,0.7,0.63,0.63,0.61,0.63,0.64,0.68,0.69,0.58,0.56,0.69,0.62,0.55,0.65,0.68,0.59,0.65,0.7,0.65,0.7,0.74,0.76,0.64,0.6,0.7,0.62,0.59,0.61,0.66,0.65,0.61,0.66,0.69,0.63,0.69,0.73,0.67,0.63,0.72,0.67,0.61,0.62,0.67,0.66,0.59,0.66,0.63,0.61,0.67,0.7,0.76,0.72,0.69,0.65,0.66,0.64,0.67,0.74,0.72,0.7,0.69,0.66,0.65,0.69,0.75,0.64,0.61,0.69,0.64,0.62,0.58,0.66,0.66,0.6,0.73,0.7,0.69,0.69,0.71,0.66,0.59,0.65,0.65,0.64,0.59,0.65,0.67,0.64,0.61,0.7,0.65,0.66,0.67],[0.13,0.35,0.59,0.61,0.56,0.73,0.68,0.59,0.65,0.61,0.63,0.66,0.69,0.72,0.63,0.62,0.65,0.65,0.66,0.65,0.7,0.61,0.66,0.62,0.63,0.67,0.71,0.76,0.65,0.64,0.65,0.65,0.66,0.68,0.73,0.63,0.57,0.69,0.66,0.55,0.65,0.73,0.62,0.66,0.75,0.7,0.7,0.7,0.77,0.66,0.61,0.7,0.66,0.58,0.61,0.65,0.68,0.61,0.66,0.7,0.63,0.66,0.74,0.7,0.64,0.73,0.7,0.63,0.64,0.64,0.7,0.59,0.66,0.64,0.64,0.66,0.69,0.76,0.69,0.66,0.68,0.65,0.66,0.64,0.8,0.7,0.69,0.68,0.69,0.66,0.66,0.75,0.67,0.63,0.69,0.66,0.62,0.59,0.64,0.69,0.62,0.72,0.74,0.67,0.67,0.71,0.68,0.6,0.66,0.69,0.64,0.61,0.63,0.72,0.63,0.62,0.69,0.66,0.63,0.64],[0.18,0.4,0.62,0.65,0.61,0.67,0.67,0.63,0.67,0.61,0.65,0.73,0.76,0.64,0.63,0.65,0.64,0.64,0.67,0.74,0.66,0.63,0.66,0.61,0.63,0.72,0.77,0.66,0.62,0.65,0.63,0.63,0.67,0.76,0.72,0.73,0.73,0.69,0.67,0.71,0.76,0.7,0.77,0.78,0.7,0.76,0.75,0.71,0.72,0.67,0.7,0.7,0.64,0.64,0.7,0.72,0.64,0.68,0.7,0.66,0.68,0.67,0.72,0.75,0.73,0.75,0.68,0.76,0.73,0.7,0.68,0.69,0.73,0.61,0.67,0.72,0.72,0.68,0.62,0.6,0.66,0.64,0.67,0.69,0.69,0.65,0.67,0.64,0.64,0.64,0.69,0.74,0.71,0.74,0.73,0.66,0.7,0.73,0.73,0.69,0.74,0.71,0.75,0.73,0.65,0.68,0.68,0.71,0.66,0.66,0.72,0.73,0.73,0.68,0.73,0.66,0.67,0.66,0.63,0.61],[0.14,0.36,0.6,0.63,0.58,0.67,0.68,0.64,0.71,0.64,0.67,0.73,0.77,0.66,0.64,0.67,0.67,0.68,0.68,0.74,0.66,0.64,0.7,0.64,0.66,0.73,0.78,0.68,0.63,0.69,0.67,0.67,0.68,0.75,0.73,0.72,0.72,0.74,0.69,0.69,0.75,0.73,0.75,0.81,0.77,0.78,0.78,0.74,0.76,0.68,0.71,0.75,0.67,0.65,0.71,0.75,0.68,0.68,0.73,0.7,0.68,0.69,0.75,0.77,0.73,0.79,0.72,0.75,0.74,0.73,0.71,0.68,0.76,0.64,0.68,0.74,0.74,0.7,0.65,0.63,0.68,0.67,0.68,0.7,0.71,0.67,0.69,0.68,0.68,0.66,0.7,0.75,0.71,0.74,0.78,0.69,0.7,0.72,0.74,0.71,0.71,0.75,0.77,0.74,0.69,0.71,0.7,0.7,0.7,0.7,0.73,0.73,0.75,0.72,0.73,0.68,0.71,0.68,0.65,0.64],[0.15,0.36,0.61,0.63,0.6,0.66,0.68,0.66,0.72,0.68,0.71,0.72,0.73,0.66,0.66,0.69,0.7,0.69,0.68,0.68,0.65,0.67,0.72,0.68,0.7,0.71,0.74,0.68,0.65,0.7,0.71,0.69,0.7,0.71,0.75,0.69,0.67,0.76,0.73,0.64,0.68,0.78,0.7,0.75,0.82,0.78,0.77,0.78,0.79,0.67,0.68,0.77,0.72,0.63,0.68,0.71,0.71,0.65,0.67,0.74,0.67,0.7,0.77,0.72,0.67,0.78,0.75,0.71,0.68,0.7,0.75,0.67,0.7,0.69,0.71,0.75,0.77,0.7,0.65,0.65,0.7,0.68,0.7,0.67,0.71,0.68,0.71,0.71,0.7,0.69,0.67,0.75,0.72,0.69,0.77,0.74,0.69,0.66,0.7,0.75,0.66,0.77,0.78,0.73,0.71,0.75,0.72,0.67,0.71,0.74,0.7,0.68,0.7,0.76,0.69,0.66,0.74,0.69,0.65,0.65],[0.16,0.37,0.62,0.63,0.6,0.65,0.65,0.65,0.71,0.68,0.71,0.74,0.73,0.64,0.64,0.7,0.69,0.69,0.68,0.69,0.63,0.64,0.71,0.68,0.69,0.73,0.75,0.66,0.62,0.7,0.69,0.69,0.7,0.73,0.73,0.72,0.7,0.75,0.74,0.68,0.7,0.76,0.74,0.77,0.79,0.81,0.77,0.76,0.77,0.69,0.7,0.76,0.72,0.65,0.7,0.73,0.71,0.68,0.68,0.71,0.66,0.69,0.74,0.75,0.69,0.78,0.74,0.76,0.71,0.71,0.76,0.7,0.71,0.68,0.74,0.76,0.76,0.68,0.63,0.62,0.68,0.67,0.69,0.69,0.69,0.65,0.71,0.69,0.7,0.68,0.68,0.74,0.74,0.72,0.78,0.74,0.73,0.7,0.72,0.75,0.68,0.73,0.78,0.73,0.7,0.72,0.73,0.71,0.71,0.72,0.74,0.72,0.73,0.76,0.72,0.67,0.71,0.7,0.65,0.63],[0.18,0.39,0.61,0.63,0.61,0.59,0.58,0.62,0.64,0.61,0.63,0.73,0.74,0.56,0.59,0.64,0.62,0.61,0.64,0.72,0.56,0.6,0.62,0.59,0.61,0.72,0.74,0.58,0.56,0.64,0.61,0.6,0.66,0.74,0.69,0.73,0.76,0.7,0.69,0.73,0.72,0.67,0.78,0.79,0.68,0.77,0.77,0.71,0.7,0.65,0.73,0.69,0.65,0.65,0.73,0.74,0.64,0.69,0.68,0.64,0.66,0.65,0.7,0.73,0.73,0.72,0.68,0.78,0.74,0.72,0.68,0.72,0.73,0.62,0.71,0.75,0.72,0.62,0.56,0.58,0.6,0.58,0.65,0.67,0.62,0.58,0.65,0.61,0.6,0.61,0.65,0.7,0.71,0.76,0.74,0.7,0.74,0.76,0.74,0.7,0.71,0.66,0.73,0.72,0.65,0.66,0.67,0.73,0.65,0.66,0.73,0.77,0.75,0.69,0.74,0.69,0.65,0.66,0.63,0.58],[0.14,0.38,0.62,0.64,0.61,0.63,0.63,0.62,0.67,0.61,0.66,0.73,0.77,0.61,0.62,0.66,0.64,0.66,0.66,0.74,0.62,0.61,0.66,0.6,0.64,0.72,0.77,0.63,0.61,0.67,0.64,0.65,0.67,0.76,0.72,0.72,0.72,0.74,0.69,0.7,0.73,0.68,0.74,0.78,0.71,0.75,0.77,0.76,0.75,0.69,0.72,0.75,0.68,0.69,0.74,0.77,0.69,0.71,0.72,0.69,0.67,0.7,0.73,0.74,0.72,0.77,0.71,0.76,0.75,0.77,0.71,0.72,0.77,0.67,0.71,0.76,0.75,0.69,0.64,0.63,0.63,0.64,0.66,0.71,0.67,0.66,0.69,0.66,0.65,0.65,0.7,0.74,0.73,0.75,0.79,0.71,0.75,0.73,0.77,0.72,0.7,0.71,0.74,0.74,0.7,0.71,0.71,0.72,0.7,0.69,0.75,0.76,0.78,0.72,0.76,0.7,0.71,0.7,0.67,0.65],[0.1,0.33,0.6,0.6,0.56,0.68,0.67,0.62,0.68,0.65,0.67,0.68,0.71,0.67,0.65,0.65,0.67,0.68,0.67,0.67,0.66,0.62,0.67,0.64,0.67,0.68,0.72,0.7,0.66,0.67,0.67,0.69,0.69,0.68,0.74,0.63,0.61,0.74,0.7,0.57,0.64,0.74,0.62,0.69,0.76,0.7,0.75,0.74,0.79,0.69,0.69,0.76,0.73,0.65,0.69,0.71,0.75,0.67,0.68,0.76,0.67,0.7,0.76,0.68,0.66,0.74,0.75,0.66,0.66,0.7,0.76,0.66,0.69,0.73,0.7,0.74,0.72,0.74,0.7,0.68,0.68,0.67,0.67,0.66,0.73,0.71,0.7,0.71,0.7,0.68,0.67,0.76,0.72,0.67,0.76,0.76,0.69,0.63,0.68,0.75,0.61,0.75,0.74,0.72,0.7,0.75,0.71,0.66,0.69,0.72,0.68,0.66,0.67,0.77,0.68,0.7,0.76,0.72,0.7,0.67],[0.14,0.36,0.64,0.65,0.61,0.65,0.65,0.62,0.69,0.64,0.68,0.72,0.74,0.65,0.64,0.68,0.67,0.69,0.68,0.72,0.64,0.62,0.68,0.63,0.67,0.72,0.75,0.66,0.62,0.68,0.67,0.68,0.7,0.75,0.73,0.72,0.7,0.74,0.72,0.69,0.7,0.72,0.73,0.76,0.74,0.78,0.76,0.73,0.75,0.7,0.72,0.75,0.71,0.69,0.73,0.76,0.73,0.71,0.72,0.72,0.66,0.68,0.74,0.76,0.71,0.76,0.72,0.76,0.72,0.74,0.74,0.72,0.75,0.69,0.74,0.76,0.74,0.7,0.66,0.64,0.66,0.66,0.67,0.69,0.69,0.67,0.69,0.69,0.69,0.67,0.69,0.74,0.73,0.74,0.78,0.73,0.75,0.72,0.75,0.75,0.68,0.72,0.76,0.73,0.69,0.7,0.72,0.72,0.71,0.71,0.75,0.73,0.75,0.74,0.76,0.71,0.73,0.72,0.69,0.66],[0.15,0.36,0.6,0.62,0.59,0.61,0.6,0.62,0.65,0.62,0.64,0.73,0.75,0.6,0.62,0.66,0.65,0.64,0.67,0.73,0.58,0.61,0.63,0.6,0.62,0.72,0.74,0.61,0.58,0.66,0.64,0.63,0.68,0.75,0.71,0.73,0.76,0.72,0.71,0.73,0.71,0.69,0.77,0.79,0.7,0.77,0.77,0.71,0.72,0.65,0.73,0.71,0.67,0.66,0.75,0.75,0.68,0.7,0.72,0.68,0.66,0.65,0.71,0.74,0.72,0.74,0.69,0.77,0.75,0.72,0.71,0.72,0.76,0.63,0.71,0.77,0.73,0.66,0.6,0.61,0.61,0.61,0.66,0.67,0.65,0.6,0.66,0.63,0.63,0.64,0.68,0.71,0.7,0.76,0.76,0.7,0.73,0.77,0.75,0.73,0.71,0.67,0.74,0.72,0.66,0.67,0.68,0.73,0.67,0.68,0.73,0.77,0.74,0.72,0.74,0.7,0.68,0.69,0.65,0.63],[0.11,0.32,0.59,0.61,0.55,0.65,0.68,0.63,0.73,0.66,0.71,0.7,0.73,0.69,0.67,0.7,0.72,0.72,0.7,0.71,0.66,0.63,0.72,0.66,0.7,0.7,0.75,0.7,0.66,0.7,0.71,0.72,0.7,0.72,0.74,0.67,0.65,0.78,0.72,0.64,0.68,0.76,0.68,0.74,0.81,0.76,0.76,0.76,0.78,0.67,0.66,0.79,0.71,0.65,0.69,0.74,0.74,0.67,0.72,0.77,0.65,0.69,0.75,0.71,0.65,0.79,0.73,0.7,0.67,0.71,0.75,0.67,0.72,0.71,0.69,0.75,0.78,0.73,0.69,0.67,0.68,0.69,0.67,0.67,0.72,0.69,0.7,0.73,0.72,0.7,0.69,0.74,0.7,0.67,0.79,0.73,0.7,0.67,0.73,0.75,0.63,0.78,0.76,0.72,0.71,0.74,0.71,0.65,0.72,0.73,0.71,0.67,0.72,0.76,0.71,0.67,0.78,0.72,0.68,0.68],[0.16,0.34,0.6,0.62,0.59,0.65,0.64,0.65,0.69,0.7,0.69,0.7,0.69,0.65,0.66,0.7,0.72,0.7,0.7,0.66,0.62,0.65,0.69,0.69,0.68,0.7,0.7,0.66,0.63,0.69,0.71,0.69,0.71,0.7,0.74,0.68,0.66,0.75,0.77,0.64,0.64,0.79,0.69,0.73,0.82,0.79,0.77,0.76,0.78,0.64,0.66,0.74,0.74,0.61,0.68,0.69,0.74,0.66,0.67,0.75,0.64,0.68,0.74,0.71,0.64,0.75,0.75,0.69,0.67,0.65,0.77,0.66,0.69,0.69,0.72,0.76,0.78,0.71,0.64,0.66,0.68,0.66,0.69,0.63,0.71,0.64,0.71,0.69,0.72,0.7,0.65,0.72,0.69,0.67,0.75,0.76,0.69,0.68,0.69,0.79,0.64,0.73,0.78,0.7,0.69,0.73,0.71,0.66,0.7,0.74,0.69,0.68,0.67,0.79,0.67,0.66,0.73,0.71,0.66,0.66],[0.15,0.38,0.62,0.65,0.6,0.64,0.65,0.62,0.69,0.63,0.69,0.74,0.77,0.63,0.65,0.69,0.68,0.7,0.7,0.78,0.64,0.62,0.68,0.62,0.67,0.73,0.78,0.64,0.62,0.68,0.66,0.68,0.71,0.78,0.74,0.74,0.74,0.76,0.72,0.74,0.74,0.71,0.77,0.79,0.74,0.79,0.79,0.74,0.75,0.68,0.71,0.75,0.68,0.68,0.74,0.79,0.71,0.73,0.76,0.73,0.67,0.69,0.73,0.76,0.71,0.77,0.7,0.78,0.73,0.75,0.72,0.73,0.77,0.67,0.72,0.78,0.77,0.7,0.66,0.64,0.65,0.66,0.67,0.7,0.67,0.66,0.68,0.67,0.67,0.67,0.71,0.75,0.72,0.75,0.79,0.71,0.76,0.76,0.8,0.76,0.71,0.73,0.76,0.75,0.69,0.7,0.7,0.72,0.7,0.7,0.76,0.75,0.78,0.73,0.78,0.7,0.73,0.72,0.69,0.67],[0.14,0.35,0.59,0.6,0.58,0.6,0.59,0.63,0.63,0.59,0.63,0.69,0.7,0.59,0.63,0.67,0.64,0.65,0.67,0.72,0.59,0.64,0.63,0.58,0.61,0.68,0.7,0.61,0.6,0.67,0.62,0.62,0.66,0.7,0.72,0.68,0.69,0.75,0.72,0.68,0.67,0.69,0.68,0.72,0.71,0.72,0.77,0.79,0.75,0.64,0.68,0.71,0.67,0.62,0.7,0.71,0.69,0.67,0.71,0.72,0.65,0.7,0.73,0.69,0.66,0.73,0.68,0.69,0.69,0.69,0.7,0.66,0.72,0.65,0.7,0.78,0.81,0.71,0.64,0.69,0.61,0.6,0.64,0.64,0.65,0.64,0.71,0.62,0.62,0.63,0.67,0.72,0.68,0.7,0.75,0.7,0.69,0.71,0.72,0.75,0.66,0.69,0.72,0.7,0.7,0.7,0.66,0.67,0.66,0.67,0.68,0.7,0.69,0.71,0.68,0.67,0.7,0.7,0.68,0.71],[0.12,0.36,0.59,0.61,0.58,0.63,0.63,0.63,0.66,0.59,0.66,0.67,0.71,0.61,0.64,0.68,0.65,0.67,0.68,0.74,0.63,0.64,0.66,0.58,0.64,0.67,0.72,0.63,0.63,0.68,0.63,0.64,0.67,0.71,0.73,0.67,0.64,0.75,0.71,0.66,0.67,0.69,0.65,0.69,0.72,0.7,0.74,0.79,0.77,0.65,0.65,0.73,0.68,0.63,0.68,0.72,0.7,0.68,0.71,0.76,0.67,0.72,0.75,0.68,0.64,0.73,0.69,0.68,0.66,0.7,0.7,0.66,0.7,0.68,0.7,0.77,0.82,0.75,0.68,0.71,0.63,0.63,0.63,0.66,0.66,0.67,0.72,0.66,0.64,0.65,0.68,0.75,0.69,0.67,0.75,0.71,0.7,0.67,0.74,0.76,0.64,0.73,0.71,0.71,0.71,0.73,0.68,0.64,0.67,0.68,0.68,0.66,0.7,0.71,0.69,0.66,0.73,0.71,0.7,0.74]],"centered":[[0.09,0.09,0.14,0.12,0.07,0.19,0.21,0.09,0.14,0.06,0.08,0.04,0.11,0.18,0.1,0.07,0.09,0.1,0.08,0.13,0.39,0.21,0.23,0.13,0.14,0.09,0.17,0.26,0.16,0.1,0.11,0.11,0.05,0.08,0.16,0.07,0.03,0.19,0.08,0.0,0.31,0.3,0.08,0.14,0.23,0.08,0.19,0.23,0.22,0.1,0.05,0.15,0.03,0.03,0.01,0.08,0.1,0.01,0.08,0.16,0.33,0.27,0.23,0.1,0.07,0.16,0.11,0.0,-0.03,0.07,0.06,-0.03,0.01,0.07,-0.01,0.06,0.12,0.34,0.39,0.34,0.39,0.26,0.15,0.18,0.36,0.3,0.24,0.18,0.16,0.07,0.04,0.15,0.09,0.0,0.12,0.1,0.02,-0.03,0.02,0.03,0.24,0.33,0.17,0.14,0.14,0.15,0.07,-0.03,0.04,0.06,-0.02,-0.05,0.01,0.07,0.06,0.09,0.19,0.09,0.11,0.15],[0.1,0.09,0.15,0.15,0.13,0.23,0.18,0.11,0.13,0.18,0.09,0.04,0.05,0.21,0.11,0.07,0.18,0.12,0.13,0.03,0.27,0.2,0.21,0.25,0.15,0.12,0.1,0.29,0.17,0.1,0.21,0.15,0.11,0.03,0.15,0.08,0.05,0.2,0.19,0.01,0.17,0.34,0.07,0.12,0.31,0.13,0.23,0.24,0.25,0.05,0.03,0.1,0.1,-0.01,0.0,0.03,0.14,-0.0,0.02,0.17,0.19,0.18,0.21,0.08,0.06,0.13,0.17,-0.01,-0.03,-0.0,0.12,-0.05,-0.03,0.08,0.03,0.07,0.12,0.35,0.38,0.41,0.35,0.22,0.2,0.07,0.44,0.27,0.3,0.22,0.27,0.16,-0.0,0.1,0.04,-0.0,0.08,0.16,-0.0,-0.01,-0.04,0.1,0.12,0.25,0.2,0.1,0.12,0.16,0.07,-0.01,0.04,0.11,-0.06,-0.05,-0.08,0.15,-0.01,0.09,0.17,0.1,0.11,0.12],[0.05,0.06,0.09,0.1,0.08,0.17,0.24,0.08,0.13,0.08,0.15,0.04,0.07,0.21,0.15,0.08,0.09,0.17,0.1,0.07,0.28,0.17,0.2,0.14,0.22,0.09,0.13,0.29,0.25,0.12,0.13,0.2,0.1,0.07,0.12,0.03,-0.01,0.22,0.11,0.01,0.12,0.23,0.02,0.09,0.26,0.08,0.22,0.31,0.25,0.07,0.0,0.14,0.04,0.02,-0.02,0.07,0.1,0.0,0.04,0.16,0.14,0.19,0.18,0.04,0.04,0.14,0.11,-0.01,-0.05,0.07,0.07,-0.02,-0.02,0.09,0.02,0.06,0.14,0.32,0.46,0.42,0.22,0.25,0.13,0.11,0.35,0.4,0.3,0.23,0.24,0.17,0.06,0.09,0.06,-0.06,0.1,0.1,0.04,-0.07,0.01,0.06,0.02,0.26,0.12,0.12,0.17,0.17,0.05,-0.06,0.05,0.06,-0.03,-0.09,-0.03,0.07,0.01,0.06,0.2,0.08,0.13,0.16],[0.07,0.09,0.13,0.16,0.15,0.24,0.13,0.06,0.08,0.1,0.04,0.07,0.1,0.19,0.08,0.02,0.11,0.09,0.14,0.12,0.2,0.12,0.13,0.14,0.07,0.12,0.13,0.28,0.14,0.08,0.15,0.12,0.12,0.11,0.14,0.06,0.05,0.18,0.17,0.06,0.14,0.24,0.07,0.13,0.26,0.13,0.22,0.25,0.28,0.06,0.04,0.07,0.05,-0.0,0.03,0.07,0.09,0.0,0.07,0.13,0.11,0.12,0.18,0.11,0.09,0.15,0.11,0.01,0.04,0.06,0.07,-0.05,0.04,0.06,0.05,0.1,0.15,0.36,0.33,0.38,0.21,0.11,0.14,0.07,0.39,0.23,0.29,0.16,0.22,0.14,0.11,0.17,-0.01,0.01,0.07,0.09,-0.02,0.03,0.02,0.08,0.09,0.18,0.17,0.07,0.13,0.14,0.03,-0.01,0.04,0.1,-0.03,-0.01,-0.02,0.1,-0.0,0.07,0.12,0.06,0.09,0.15],[-0.01,0.05,0.07,0.1,0.09,0.23,0.22,0.05,0.14,0.02,0.09,0.13,0.23,0.19,0.09,0.07,0.06,0.11,0.13,0.26,0.27,0.12,0.18,0.06,0.14,0.16,0.29,0.28,0.16,0.14,0.1,0.13,0.13,0.21,0.23,0.06,0.05,0.21,0.09,0.06,0.23,0.22,0.1,0.18,0.26,0.14,0.23,0.33,0.35,0.1,0.04,0.17,0.01,0.0,0.03,0.14,0.07,0.01,0.15,0.17,0.14,0.19,0.26,0.13,0.1,0.24,0.1,0.06,0.05,0.17,0.07,-0.01,0.08,0.05,0.04,0.14,0.22,0.37,0.32,0.26,0.15,0.15,0.11,0.17,0.33,0.28,0.23,0.19,0.15,0.13,0.21,0.32,0.07,0.01,0.14,0.06,0.03,-0.0,0.12,0.06,0.11,0.3,0.19,0.16,0.17,0.22,0.07,-0.02,0.06,0.11,0.04,-0.0,0.1,0.11,0.08,0.03,0.2,0.06,0.1,0.18],[0.01,0.04,0.12,0.14,0.1,0.35,0.25,0.1,0.17,0.14,0.13,0.16,0.22,0.35,0.15,0.1,0.16,0.15,0.18,0.16,0.3,0.14,0.19,0.17,0.15,0.19,0.25,0.42,0.2,0.14,0.19,0.17,0.17,0.21,0.31,0.14,0.07,0.21,0.18,0.07,0.21,0.35,0.14,0.2,0.37,0.25,0.22,0.23,0.38,0.12,0.05,0.18,0.1,-0.01,0.02,0.1,0.15,0.01,0.14,0.19,0.11,0.1,0.27,0.22,0.12,0.25,0.19,0.09,0.09,0.09,0.18,-0.02,0.09,0.05,0.1,0.1,0.18,0.37,0.24,0.18,0.23,0.14,0.14,0.1,0.48,0.23,0.18,0.17,0.21,0.15,0.14,0.31,0.13,0.05,0.13,0.11,0.02,0.03,0.06,0.15,0.15,0.27,0.28,0.12,0.12,0.21,0.13,-0.0,0.1,0.2,0.04,0.03,0.06,0.24,0.06,0.03,0.16,0.07,0.03,0.09],[0.09,0.12,0.18,0.23,0.19,0.2,0.22,0.18,0.2,0.13,0.16,0.33,0.39,0.16,0.15,0.17,0.14,0.12,0.21,0.37,0.21,0.19,0.2,0.13,0.15,0.32,0.4,0.17,0.13,0.18,0.14,0.11,0.21,0.4,0.29,0.39,0.41,0.22,0.19,0.39,0.46,0.28,0.5,0.47,0.26,0.41,0.35,0.25,0.25,0.16,0.26,0.15,0.05,0.13,0.23,0.29,0.04,0.2,0.24,0.09,0.25,0.13,0.23,0.35,0.33,0.31,0.12,0.4,0.33,0.25,0.11,0.23,0.29,-0.02,0.19,0.26,0.25,0.15,0.06,0.06,0.17,0.1,0.18,0.23,0.19,0.1,0.12,0.06,0.08,0.1,0.22,0.29,0.24,0.33,0.25,0.09,0.24,0.34,0.3,0.15,0.41,0.23,0.33,0.26,0.08,0.1,0.12,0.26,0.11,0.13,0.25,0.33,0.32,0.14,0.32,0.13,0.09,0.07,0.03,0.02],[0.01,0.05,0.12,0.16,0.11,0.18,0.21,0.19,0.28,0.18,0.2,0.33,0.39,0.19,0.16,0.21,0.2,0.2,0.22,0.35,0.2,0.19,0.27,0.18,0.19,0.34,0.42,0.21,0.14,0.24,0.2,0.2,0.21,0.36,0.31,0.35,0.4,0.33,0.22,0.33,0.42,0.34,0.43,0.53,0.39,0.45,0.43,0.32,0.34,0.17,0.28,0.28,0.11,0.13,0.25,0.34,0.12,0.15,0.3,0.17,0.22,0.18,0.28,0.36,0.32,0.42,0.2,0.37,0.32,0.3,0.18,0.2,0.33,0.04,0.18,0.3,0.3,0.2,0.1,0.09,0.2,0.15,0.19,0.23,0.22,0.11,0.16,0.14,0.17,0.12,0.22,0.3,0.23,0.31,0.35,0.17,0.22,0.31,0.31,0.18,0.34,0.33,0.36,0.28,0.17,0.18,0.16,0.23,0.19,0.22,0.25,0.31,0.34,0.21,0.29,0.16,0.19,0.11,0.05,0.07],[0.02,0.03,0.13,0.17,0.14,0.16,0.21,0.23,0.31,0.27,0.29,0.28,0.27,0.17,0.18,0.25,0.27,0.21,0.21,0.2,0.16,0.23,0.3,0.28,0.27,0.28,0.31,0.19,0.16,0.26,0.3,0.22,0.25,0.25,0.33,0.26,0.26,0.35,0.32,0.21,0.27,0.43,0.31,0.38,0.53,0.43,0.39,0.4,0.41,0.12,0.18,0.33,0.24,0.05,0.14,0.23,0.19,0.07,0.12,0.27,0.19,0.18,0.33,0.23,0.16,0.37,0.28,0.26,0.16,0.2,0.29,0.14,0.14,0.16,0.25,0.31,0.38,0.19,0.1,0.13,0.25,0.17,0.21,0.15,0.23,0.12,0.21,0.22,0.21,0.2,0.13,0.28,0.23,0.16,0.32,0.28,0.17,0.16,0.19,0.27,0.2,0.38,0.37,0.23,0.19,0.28,0.19,0.14,0.19,0.31,0.17,0.17,0.2,0.32,0.15,0.1,0.25,0.12,0.05,0.08],[0.04,0.05,0.13,0.16,0.16,0.12,0.15,0.2,0.28,0.27,0.28,0.34,0.29,0.13,0.13,0.27,0.24,0.21,0.21,0.24,0.1,0.18,0.27,0.26,0.26,0.32,0.32,0.15,0.09,0.27,0.26,0.23,0.25,0.31,0.3,0.34,0.33,0.33,0.34,0.3,0.3,0.4,0.4,0.43,0.44,0.52,0.39,0.36,0.35,0.16,0.24,0.29,0.24,0.12,0.21,0.27,0.2,0.14,0.14,0.19,0.17,0.15,0.24,0.3,0.2,0.36,0.26,0.39,0.24,0.25,0.3,0.24,0.2,0.12,0.33,0.32,0.34,0.13,0.04,0.06,0.18,0.14,0.21,0.17,0.17,0.05,0.19,0.16,0.2,0.17,0.15,0.24,0.28,0.24,0.34,0.27,0.29,0.25,0.25,0.29,0.25,0.28,0.38,0.24,0.16,0.2,0.23,0.23,0.2,0.26,0.28,0.27,0.28,0.31,0.25,0.13,0.17,0.14,0.03,0.02],[0.1,0.12,0.18,0.2,0.21,0.04,0.04,0.17,0.15,0.15,0.14,0.35,0.37,0.0,0.09,0.17,0.13,0.07,0.17,0.34,0.01,0.14,0.12,0.12,0.11,0.34,0.36,0.01,0.02,0.17,0.12,0.08,0.19,0.36,0.24,0.41,0.5,0.25,0.27,0.45,0.39,0.21,0.52,0.51,0.23,0.45,0.43,0.29,0.22,0.13,0.36,0.15,0.11,0.18,0.33,0.36,0.07,0.23,0.21,0.06,0.21,0.11,0.18,0.3,0.35,0.27,0.15,0.47,0.37,0.32,0.16,0.34,0.3,0.04,0.29,0.37,0.28,0.04,-0.06,0.03,0.06,0.0,0.15,0.2,0.04,-0.07,0.12,0.01,0.03,0.04,0.14,0.2,0.26,0.39,0.3,0.22,0.35,0.44,0.35,0.19,0.36,0.13,0.29,0.27,0.08,0.08,0.13,0.35,0.1,0.14,0.31,0.45,0.37,0.18,0.35,0.23,0.06,0.1,0.05,-0.02],[-0.01,0.05,0.14,0.17,0.15,0.07,0.09,0.11,0.17,0.09,0.14,0.31,0.37,0.05,0.08,0.15,0.11,0.12,0.15,0.34,0.07,0.08,0.14,0.08,0.12,0.28,0.37,0.07,0.06,0.17,0.1,0.12,0.16,0.36,0.25,0.32,0.37,0.3,0.21,0.34,0.36,0.18,0.4,0.44,0.23,0.35,0.38,0.34,0.28,0.16,0.29,0.24,0.1,0.19,0.29,0.37,0.11,0.22,0.25,0.11,0.18,0.15,0.2,0.28,0.29,0.31,0.14,0.39,0.34,0.38,0.16,0.27,0.33,0.08,0.22,0.31,0.3,0.14,0.06,0.06,0.04,0.05,0.11,0.23,0.09,0.04,0.13,0.06,0.07,0.05,0.19,0.24,0.24,0.31,0.36,0.18,0.32,0.33,0.36,0.17,0.28,0.18,0.25,0.26,0.14,0.13,0.15,0.27,0.16,0.14,0.3,0.35,0.39,0.19,0.34,0.2,0.15,0.13,0.08,0.06],[-0.07,-0.02,0.08,0.08,0.05,0.19,0.18,0.1,0.17,0.17,0.16,0.17,0.21,0.2,0.15,0.14,0.17,0.17,0.18,0.15,0.17,0.12,0.17,0.17,0.18,0.18,0.22,0.25,0.18,0.17,0.2,0.21,0.19,0.16,0.3,0.1,0.11,0.28,0.23,0.06,0.14,0.32,0.11,0.21,0.37,0.2,0.32,0.29,0.38,0.16,0.18,0.29,0.24,0.08,0.15,0.21,0.28,0.11,0.12,0.31,0.17,0.15,0.26,0.08,0.12,0.22,0.27,0.12,0.09,0.2,0.3,0.11,0.11,0.26,0.2,0.27,0.23,0.29,0.2,0.2,0.17,0.14,0.12,0.09,0.27,0.19,0.16,0.2,0.2,0.14,0.1,0.28,0.22,0.08,0.27,0.31,0.15,0.06,0.11,0.26,0.07,0.29,0.23,0.19,0.16,0.25,0.16,0.08,0.13,0.23,0.1,0.1,0.1,0.34,0.13,0.18,0.3,0.17,0.16,0.12],[-0.01,0.03,0.17,0.2,0.16,0.1,0.14,0.12,0.2,0.16,0.19,0.29,0.3,0.13,0.13,0.2,0.18,0.2,0.2,0.29,0.1,0.12,0.18,0.15,0.18,0.28,0.32,0.14,0.09,0.2,0.18,0.2,0.22,0.33,0.26,0.32,0.33,0.3,0.27,0.33,0.3,0.28,0.38,0.39,0.31,0.41,0.34,0.27,0.27,0.19,0.28,0.26,0.18,0.19,0.27,0.35,0.22,0.22,0.25,0.2,0.15,0.12,0.21,0.31,0.24,0.28,0.19,0.37,0.25,0.3,0.24,0.27,0.27,0.13,0.3,0.31,0.28,0.15,0.11,0.09,0.11,0.12,0.14,0.18,0.14,0.07,0.12,0.12,0.16,0.12,0.17,0.22,0.26,0.28,0.34,0.24,0.32,0.29,0.32,0.26,0.22,0.21,0.31,0.23,0.11,0.13,0.18,0.24,0.16,0.22,0.29,0.28,0.31,0.25,0.33,0.21,0.21,0.18,0.11,0.08],[0.05,0.08,0.14,0.18,0.16,0.08,0.07,0.17,0.17,0.17,0.17,0.36,0.37,0.08,0.14,0.21,0.18,0.15,0.24,0.37,0.04,0.15,0.14,0.14,0.12,0.34,0.35,0.07,0.06,0.2,0.17,0.14,0.25,0.39,0.29,0.39,0.5,0.29,0.31,0.44,0.37,0.26,0.49,0.52,0.27,0.44,0.43,0.26,0.25,0.12,0.36,0.21,0.16,0.18,0.37,0.37,0.16,0.26,0.31,0.15,0.2,0.11,0.21,0.32,0.34,0.31,0.17,0.43,0.38,0.3,0.22,0.32,0.37,0.06,0.29,0.39,0.32,0.13,0.02,0.08,0.08,0.05,0.17,0.18,0.1,-0.03,0.12,0.04,0.09,0.11,0.21,0.22,0.22,0.39,0.33,0.23,0.32,0.46,0.37,0.27,0.36,0.17,0.32,0.26,0.11,0.11,0.13,0.33,0.15,0.2,0.3,0.43,0.36,0.25,0.35,0.24,0.14,0.16,0.1,0.07],[-0.04,-0.03,0.07,0.1,0.04,0.13,0.22,0.14,0.31,0.21,0.27,0.24,0.27,0.24,0.2,0.26,0.3,0.3,0.25,0.27,0.18,0.15,0.3,0.22,0.27,0.23,0.31,0.24,0.19,0.26,0.3,0.3,0.25,0.28,0.31,0.22,0.21,0.41,0.29,0.21,0.25,0.38,0.25,0.35,0.51,0.36,0.36,0.36,0.36,0.12,0.13,0.38,0.2,0.11,0.17,0.3,0.26,0.13,0.26,0.36,0.12,0.16,0.27,0.2,0.11,0.38,0.23,0.23,0.13,0.23,0.27,0.14,0.22,0.2,0.2,0.31,0.38,0.27,0.21,0.17,0.19,0.2,0.14,0.14,0.24,0.16,0.16,0.26,0.27,0.2,0.17,0.25,0.18,0.11,0.37,0.26,0.21,0.17,0.27,0.28,0.13,0.38,0.3,0.21,0.18,0.24,0.17,0.08,0.23,0.28,0.18,0.14,0.24,0.32,0.21,0.13,0.35,0.2,0.12,0.16],[0.05,0.02,0.12,0.15,0.14,0.14,0.13,0.2,0.24,0.31,0.26,0.25,0.19,0.18,0.19,0.27,0.33,0.26,0.28,0.17,0.1,0.2,0.24,0.3,0.24,0.26,0.2,0.17,0.14,0.25,0.32,0.25,0.28,0.23,0.32,0.25,0.26,0.35,0.44,0.24,0.19,0.48,0.29,0.34,0.53,0.47,0.39,0.36,0.39,0.06,0.14,0.26,0.3,0.04,0.17,0.2,0.28,0.11,0.14,0.32,0.13,0.13,0.27,0.22,0.1,0.3,0.29,0.23,0.14,0.1,0.35,0.14,0.15,0.18,0.3,0.34,0.41,0.22,0.09,0.18,0.21,0.13,0.2,0.04,0.23,0.04,0.22,0.17,0.27,0.22,0.1,0.21,0.17,0.14,0.27,0.34,0.18,0.22,0.18,0.4,0.17,0.27,0.38,0.17,0.15,0.24,0.18,0.14,0.18,0.33,0.15,0.19,0.14,0.42,0.13,0.12,0.24,0.19,0.09,0.11],[0.02,0.07,0.15,0.19,0.14,0.09,0.14,0.13,0.23,0.15,0.22,0.34,0.39,0.11,0.15,0.24,0.21,0.24,0.27,0.44,0.12,0.13,0.21,0.13,0.21,0.32,0.41,0.1,0.1,0.23,0.18,0.21,0.26,0.42,0.3,0.37,0.42,0.36,0.3,0.45,0.41,0.28,0.48,0.49,0.32,0.45,0.42,0.32,0.29,0.15,0.27,0.26,0.11,0.2,0.31,0.42,0.19,0.28,0.35,0.24,0.2,0.14,0.22,0.33,0.27,0.35,0.14,0.44,0.3,0.35,0.19,0.3,0.34,0.1,0.29,0.4,0.37,0.2,0.11,0.1,0.11,0.13,0.15,0.22,0.11,0.07,0.12,0.11,0.14,0.14,0.23,0.27,0.24,0.32,0.37,0.21,0.36,0.39,0.45,0.3,0.32,0.26,0.32,0.29,0.14,0.15,0.15,0.27,0.17,0.18,0.33,0.35,0.41,0.23,0.4,0.2,0.22,0.2,0.15,0.13],[0.03,0.06,0.11,0.15,0.14,0.07,0.06,0.19,0.13,0.1,0.14,0.24,0.26,0.07,0.16,0.23,0.16,0.15,0.24,0.34,0.06,0.21,0.14,0.09,0.11,0.24,0.25,0.08,0.11,0.23,0.13,0.11,0.2,0.28,0.31,0.28,0.34,0.36,0.33,0.33,0.27,0.25,0.29,0.35,0.28,0.31,0.42,0.46,0.33,0.09,0.22,0.21,0.15,0.1,0.25,0.27,0.17,0.19,0.28,0.26,0.18,0.24,0.26,0.2,0.18,0.27,0.15,0.25,0.23,0.22,0.2,0.19,0.25,0.1,0.27,0.43,0.5,0.26,0.13,0.28,0.08,0.02,0.11,0.11,0.11,0.07,0.25,0.04,0.05,0.07,0.17,0.25,0.17,0.23,0.32,0.23,0.23,0.31,0.3,0.34,0.24,0.21,0.25,0.22,0.22,0.2,0.09,0.17,0.12,0.17,0.17,0.26,0.23,0.23,0.2,0.18,0.2,0.19,0.17,0.27],[-0.0,0.04,0.1,0.12,0.13,0.1,0.12,0.16,0.16,0.07,0.17,0.19,0.26,0.09,0.16,0.23,0.16,0.19,0.24,0.36,0.12,0.19,0.18,0.07,0.15,0.18,0.27,0.1,0.14,0.22,0.13,0.14,0.19,0.26,0.31,0.22,0.22,0.35,0.3,0.28,0.26,0.24,0.22,0.27,0.29,0.25,0.32,0.46,0.38,0.1,0.13,0.23,0.14,0.09,0.18,0.28,0.18,0.17,0.26,0.34,0.2,0.25,0.3,0.14,0.1,0.24,0.13,0.19,0.12,0.23,0.17,0.15,0.17,0.15,0.25,0.39,0.52,0.33,0.18,0.29,0.09,0.08,0.07,0.13,0.1,0.12,0.25,0.1,0.07,0.1,0.17,0.3,0.18,0.12,0.28,0.23,0.22,0.2,0.32,0.34,0.17,0.28,0.21,0.2,0.21,0.25,0.1,0.09,0.11,0.16,0.15,0.14,0.23,0.21,0.19,0.12,0.25,0.19,0.2,0.33]],"diag":29},"steps":[{"live":330,"single":159.12,"tracker":159.12,"setlist":10},{"live":333,"single":8.16,"tracker":162.4,"setlist":13},{"live":336,"single":68.64,"tracker":11.44,"setlist":16},{"live":339,"single":71.92,"tracker":14.32,"setlist":19},{"live":342,"single":17.2,"tracker":17.2,"setlist":22},{"live":345,"single":20.48,"tracker":20.48,"setlist":25},{"live":348,"single":20.0,"tracker":23.36,"setlist":28},{"live":351,"single":19.119999999999997,"tracker":26.24,"setlist":31}]}</script>
+<script>
+(function () {
+  const data = JSON.parse(document.getElementById("figure-data").textContent);
+  const NS = "http://www.w3.org/2000/svg";
+  const svgEl = (name, attrs, parent, text) => {
+    const node = document.createElementNS(NS, name);
+    for (const k in attrs) node.setAttribute(k, attrs[k]);
+    if (text !== undefined) node.textContent = text;
+    parent.appendChild(node);
+    return node;
+  };
+  const htmlEl = (name, className, parent, text) => {
+    const node = document.createElement(name);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    parent.appendChild(node);
+    return node;
+  };
+  const mmss = (s) => Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).padStart(2, "0");
+
+  // Sticks: 250 frames, 20 groups of 12, 10 dropped
+  const sticks = document.getElementById("sticks");
+  const unit = 600 / 250, x0 = 20;
+  for (let i = 0; i < 20; i++) {
+    svgEl("rect", { x: x0 + i * 12 * unit + 1, y: 18, width: 12 * unit - 2, height: 34, rx: 2, fill: "var(--accent)", "fill-opacity": i % 2 ? 0.7 : 1 }, sticks);
+  }
+  svgEl("rect", { x: x0 + 240 * unit + 1, y: 18, width: 10 * unit - 2, height: 34, rx: 2, fill: "var(--muted)", "fill-opacity": 0.35 }, sticks);
+  for (let f = 0; f <= 250; f += 25) {
+    svgEl("line", { x1: x0 + f * unit, x2: x0 + f * unit, y1: 56, y2: 62, class: "axis" }, sticks);
+    svgEl("text", { x: x0 + f * unit, y: 76, "text-anchor": "middle" }, sticks, (f / 25) + " s");
+  }
+  svgEl("text", { x: x0, y: 12 }, sticks, "stick 1 = frames 1–12, 0.48 s");
+  svgEl("text", { x: x0 + 250 * unit, y: 12, "text-anchor": "end" }, sticks, "dropped");
+  svgEl("text", { x: 320, y: 92, "text-anchor": "middle" }, sticks, "frames (25 per second)");
+
+  // Heatmaps: rows = live sticks, cols = studio sticks, per-panel min-max scale
+  function heat(id, matrix, diagStart) {
+    const svg = document.getElementById(id);
+    const rows = matrix.length, cols = matrix[0].length;
+    const left = 30, top = 4, w = 600 / cols, h = 100 / rows;
+    let lo = Infinity, hi = -Infinity;
+    matrix.forEach(r => r.forEach(v => { lo = Math.min(lo, v); hi = Math.max(hi, v); }));
+    matrix.forEach((r, i) => r.forEach((v, j) => {
+      svgEl("rect", { x: left + j * w, y: top + i * h, width: w + 0.2, height: h + 0.2, fill: "var(--accent)", "fill-opacity": ((v - lo) / (hi - lo)).toFixed(3) }, svg);
+    }));
+    svgEl("rect", { x: left, y: top, width: 600, height: 100, fill: "none", class: "axis" }, svg);
+    svgEl("line", { x1: left + diagStart * w, y1: top, x2: left + (diagStart + rows) * w, y2: top + 100, stroke: "var(--fg)", "stroke-width": 1, "stroke-dasharray": "3 3" }, svg);
+    for (let c = 0; c <= cols; c += 20) {
+      svgEl("text", { x: left + c * w, y: 122, "text-anchor": "middle" }, svg, mmss(c / 20 * 10));
+    }
+    svgEl("text", { x: left - 6, y: top + 8, "text-anchor": "end" }, svg, "1");
+    svgEl("text", { x: left - 6, y: top + 100, "text-anchor": "end" }, svg, "20");
+  }
+  heat("heat-raw", data.heat.raw, data.heat.diag);
+  heat("heat-centered", data.heat.centered, data.heat.diag);
+
+  // Studio position over live time
+  const pos = document.getElementById("positions");
+  const P = { l: 52, r: 620, t: 12, b: 262 }, yMax = 180;
+  const xs = data.steps.map(s => s.live);
+  const xOf = (t) => P.l + (t - xs[0]) / (xs[xs.length - 1] - xs[0]) * (P.r - P.l);
+  const yOf = (s) => P.b - s / yMax * (P.b - P.t);
+  for (let s = 0; s <= yMax; s += 30) {
+    svgEl("line", { x1: P.l, x2: P.r, y1: yOf(s), y2: yOf(s), class: "axis" }, pos);
+    svgEl("text", { x: P.l - 8, y: yOf(s) + 4, "text-anchor": "end" }, pos, mmss(s));
+  }
+  xs.forEach(t => svgEl("text", { x: xOf(t), y: P.b + 18, "text-anchor": "middle" }, pos, mmss(t)));
+  svgEl("text", { x: (P.l + P.r) / 2, y: P.b + 36, "text-anchor": "middle" }, pos, "live concert time");
+  svgEl("text", { x: 12, y: (P.t + P.b) / 2, "text-anchor": "middle", transform: `rotate(-90 12 ${(P.t + P.b) / 2})` }, pos, "studio position");
+  svgEl("polyline", { points: data.steps.map(s => xOf(s.live) + "," + yOf(s.setlist)).join(" "), fill: "none", stroke: "var(--ref)", "stroke-width": 1.5, "stroke-dasharray": "5 4" }, pos);
+  svgEl("polyline", { points: data.steps.map(s => xOf(s.live) + "," + yOf(s.tracker)).join(" "), fill: "none", stroke: "var(--accent)", "stroke-width": 2.5, "stroke-linejoin": "round" }, pos);
+  data.steps.forEach(s => {
+    svgEl("circle", { cx: xOf(s.live), cy: yOf(s.single), r: 5, fill: "var(--surface)", stroke: "var(--muted)", "stroke-width": 1.5 }, pos);
+    svgEl("circle", { cx: xOf(s.live), cy: yOf(s.tracker), r: 4, fill: "var(--accent)" }, pos);
+  });
+  svgEl("text", { x: xOf(xs[1]) + 10, y: yOf(data.steps[1].tracker) + 4, class: "lbl" }, pos, "wrong chorus, 2:39");
+  svgEl("text", { x: xOf(xs[3]) + 10, y: yOf(data.steps[3].single) - 10, class: "lbl" }, pos, "one window alone");
+
+  // Results
+  const shows = [
+    ["Marilyn Manson, Antwerp", 40, 88, 110, 49, 4],
+    ["Marilyn Manson, Newcastle", 68, 168, 194, 93, 2],
+    ["Bad Omens", 239, 286, 380, 108, 9],
+    ["FIR", 219, 313, 385, 146, 11],
+    ["Ice Nine Kills", 164, 246, 291, 100, 4],
+  ];
+  const box = document.getElementById("results-bars"), jumps = document.getElementById("jumps");
+  shows.forEach(([name, single, track, total, j1, j2]) => {
+    const row = htmlEl("div", "show", box);
+    htmlEl("span", "show-name", row, name);
+    const bars = htmlEl("div", "bars", row);
+    [["track", track], ["single", single]].forEach(([cls, n]) => {
+      const bar = htmlEl("div", "bar " + cls, bars);
+      htmlEl("i", "", bar).style.width = (n / total * 100).toFixed(1) + "%";
+      htmlEl("b", "", bar, `${n} / ${total} · ${Math.round(n / total * 100)}%`);
+    });
+    const tr = htmlEl("tr", "", jumps);
+    htmlEl("td", "", tr, name);
+    htmlEl("td", "num", tr, String(j1));
+    htmlEl("td", "num", tr, String(j2));
+  });
+
+  // Copy prompt
+  const button = document.getElementById("copy-prompt"), text = document.getElementById("prompt-text");
+  button.addEventListener("click", () => {
+    const selectIt = () => {
+      const range = document.createRange(); range.selectNodeContents(text);
+      const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range);
+      button.textContent = "Selected, copy with your keyboard";
+    };
+    if (!navigator.clipboard) return selectIt();
+    navigator.clipboard.writeText(text.textContent).then(() => {
+      button.textContent = "Copied";
+      setTimeout(() => { button.textContent = "Copy prompt"; }, 2000);
+    }, selectIt);
+  });
+})();
+</script>
+</body>
+</html>

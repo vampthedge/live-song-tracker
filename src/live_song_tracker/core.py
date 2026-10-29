@@ -5,13 +5,14 @@ Its output is cut into 0.48 s "sticks" and slid along every studio song. One win
 on the wrong chorus or verse repeat, so the tracker keeps an evidence score for every studio stick of
 every song, moves it forward with the concert, lets it fade, and adds each new window's scores.
 
-    python live_song_tracker.py --library studio/ --live show.wav
+    live-song-tracker --library studio/ --live show.wav
 """
 
 import argparse
 import json
 import re
 from pathlib import Path
+from typing import NamedTuple
 
 import torch
 import torch.nn as nn
@@ -43,12 +44,13 @@ STICKS_PER_STEP = round(STEP_SECONDS / STICK_SECONDS)  # 3 s = 6 sticks
 
 AUDIO_EXTENSIONS = [".mp3", ".wav", ".m4a", ".flac", ".aiff", ".ogg"]
 
-if torch.cuda.is_available():
-    device = "cuda"
-elif torch.backends.mps.is_available():
-    device = "mps"
-else:
-    device = "cpu"
+
+def default_device():
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
 
 
 def load_audio(path, sample_rate=MODEL_SAMPLE_RATE):
@@ -187,7 +189,8 @@ class PupuM2DModel(nn.Module):
         return h.view(B, grid_size[0], grid_size[1] * self.embed_dim)
 
 
-def load_model():
+def load_model(device=None):
+    """Download (once) and load PupuM2D-Large. device: "cuda", "mps" or "cpu"; default: the fastest available."""
     args_path = hf_hub_download(repo_id=MODEL_NAME, filename=f"{MODEL_SUBFOLDER}/args.json", revision=MODEL_REVISION)
     ckpt_path = hf_hub_download(repo_id=MODEL_NAME, filename=MODEL_CKPT, revision=MODEL_REVISION)
     with open(args_path) as f:
@@ -199,11 +202,12 @@ def load_model():
             if k.startswith("patch_embed.") or k.startswith("teacher."):
                 state_dict[k] = f.get_tensor(k)
     model.load_state_dict(state_dict, strict=True)
-    return model.train(False).to(device)  # inference mode
+    return model.train(False).to(device or default_device())  # inference mode
 
 
 def embed_windows(windows, model):
     """Windows (N, samples) -> pooled (N, C), one vector per window, and sticks (N, sticks_per_window, C). Both unit length."""
+    device = next(model.parameters()).device
     pooled, sticks = [], []
     for start in range(0, len(windows), WINDOWS_PER_FORWARD_PASS):
         with torch.no_grad():
@@ -216,14 +220,24 @@ def embed_windows(windows, model):
     return F.normalize(torch.cat(pooled), dim=-1), F.normalize(torch.cat(sticks), dim=-1)
 
 
-def build_library(library_folder, model):
-    """song name -> pooled (windows, C) and song name -> sticks (windows, sticks_per_window, C)."""
+def build_library(library_folder, model, cache=None):
+    """Embed every studio recording in a folder; the file name is the song name.
+
+    Returns (pooled, sticks): song -> (windows, C) and song -> (windows, sticks_per_window, C).
+    With cache, a saved library is loaded from that path, or the new one is saved there.
+    """
+    if cache and Path(cache).exists():
+        return torch.load(cache, weights_only=True)
     pooled, sticks = {}, {}
     for path in sorted(Path(library_folder).iterdir()):
         if path.suffix.lower() not in AUDIO_EXTENSIONS:
             continue
         pooled[path.stem], sticks[path.stem] = embed_windows(cut_into_windows(load_audio(path)), model)
         print(f"  {path.stem}: {len(pooled[path.stem])} windows")
+    if not pooled:
+        raise ValueError(f"No audio files found in {library_folder}")
+    if cache:
+        torch.save((pooled, sticks), cache)
     return pooled, sticks
 
 
@@ -263,18 +277,47 @@ def stick_to_second(stick_index):
     return (stick_index // sticks_per_window) * WINDOW_SECONDS + (stick_index % sticks_per_window) * STICK_SECONDS
 
 
-class Tracker:
-    """Evidence over every studio stick of every song, moved forward one step per window."""
+class Match(NamedTuple):
+    song: str  # library file name without extension
+    second: float  # position in the studio recording
+    confidence: float  # average window similarity behind this pick
+    sure: bool  # confidence >= CONFIDENCE_NEEDED; below it the pick is usually wrong
 
-    def __init__(self, centered_library):
-        self.centered_library = centered_library  # song -> (all sticks, C)
+
+class Tracker:
+    """Follows one live performance. Feed it a WINDOW_SECONDS window every STEP_SECONDS.
+
+    tracker = Tracker(model, build_library("studio/", model))
+    match = tracker.step(last_10_seconds)  # 1D tensor at MODEL_SAMPLE_RATE, mono
+    """
+
+    def __init__(self, model, library):
+        self.model = model
+        self.library_pooled, library_sticks = library
+        C = next(iter(library_sticks.values())).shape[-1]
+        self.mean_stick = torch.cat([sticks.view(-1, C) for sticks in library_sticks.values()]).mean(dim=0)
+        self.centered_library = {song: center_sticks(sticks.view(-1, C), self.mean_stick) for song, sticks in library_sticks.items()}
         self.evidence = {}  # song -> one score per possible start stick
         self.evidence_weight = 0.0  # 1, 1.9, 2.71, ... settles at 1 / (1 - decay)
         self.last_song = ""
         self.last_stick = -1
 
-    def step(self, live_sticks):
-        """Add one window's centered sticks. Returns (song, studio second, confidence)."""
+    def step(self, window):
+        """One live window, WINDOW_SECONDS of mono audio at MODEL_SAMPLE_RATE (shorter is padded with silence).
+
+        Returns a Match, or None when no song in the library sounds like this window.
+        """
+        samples = WINDOW_SECONDS * MODEL_SAMPLE_RATE
+        window = F.pad(window[:samples], (0, max(0, samples - len(window))))
+        return self.step_embeddings(*embed_windows(window.view(1, -1), self.model))
+
+    def step_embeddings(self, live_pooled, live_sticks):
+        """step() after the model: live_pooled (1, C) and live_sticks (1, sticks, C) from embed_windows."""
+        if max(score_songs(live_pooled, self.library_pooled).values()) <= SONG_SCORE_NEEDED:
+            # shortcut: a skipped window does not move the evidence on (as in the original notebook), so the
+            # next pick compares against evidence one step behind; shift it here too if skips mid-song get common
+            return None
+        live_sticks = center_sticks(live_sticks.view(-1, live_sticks.shape[-1]), self.mean_stick)
         for song, song_sticks in self.centered_library.items():
             new_scores = alignment_scores(live_sticks, song_sticks)
             moved = torch.zeros_like(new_scores)
@@ -294,7 +337,8 @@ class Tracker:
         self.last_song, self.last_stick = song, stick
         # evidence is a weighted sum of window scores; dividing by the weights gives their average
         self.evidence_weight = EVIDENCE_DECAY * self.evidence_weight + 1
-        return song, stick_to_second(stick), self.evidence[song][stick].item() / self.evidence_weight
+        confidence = self.evidence[song][stick].item() / self.evidence_weight
+        return Match(song, stick_to_second(stick), confidence, confidence >= CONFIDENCE_NEEDED)
 
 
 def load_lyrics(path):
@@ -345,22 +389,12 @@ def main():
     parser.add_argument("--steps", type=int, help="number of 3 s steps (default: to the end)")
     args = parser.parse_args()
 
-    print(f"Loading {MODEL_NAME} on {device}")
+    print(f"Loading {MODEL_NAME} on {default_device()}")
     model = load_model()
-
-    if args.cache and Path(args.cache).exists():
-        library_pooled, library_sticks = torch.load(args.cache, weights_only=True)
-    else:
-        print(f"Embedding studio songs in {args.library}")
-        library_pooled, library_sticks = build_library(args.library, model)
-        if args.cache:
-            torch.save((library_pooled, library_sticks), args.cache)
-    if not library_pooled:
-        raise SystemExit(f"No audio files found in {args.library}")
-
-    C = next(iter(library_sticks.values())).shape[-1]
-    mean_stick = torch.cat([sticks.view(-1, C) for sticks in library_sticks.values()]).mean(dim=0)
-    tracker = Tracker({song: center_sticks(sticks.view(-1, C), mean_stick) for song, sticks in library_sticks.items()})
+    try:
+        tracker = Tracker(model, build_library(args.library, model, cache=args.cache))
+    except ValueError as error:
+        raise SystemExit(error)
 
     live_path = Path(args.live)
     setlist_path = Path(args.setlist) if args.setlist else live_path.with_suffix(".txt")
@@ -377,15 +411,14 @@ def main():
              if s <= start_second and e >= start_second + WINDOW_SECONDS),
             "",
         )
-        live_window = samples[start_sample : start_sample + window]
-        live_pooled, live_sticks = embed_windows(F.pad(live_window, (0, window - len(live_window))).view(1, -1), model)
+        match = tracker.step(samples[start_sample : start_sample + window])
         line = f"live {format_time(start_second)}  "
-        if max(score_songs(live_pooled, library_pooled).values()) <= SONG_SCORE_NEEDED:
+        if match is None:
             print(line + "no song in the library sounds like this")
             continue
-        song, second, confidence = tracker.step(center_sticks(live_sticks.view(-1, C), mean_stick))
+        song, second, confidence, sure = match
         line += f"{song} at {format_time(second)} ({second:.1f}s) confidence {confidence:.2f}"
-        if confidence < CONFIDENCE_NEEDED:
+        if not sure:
             line += "  (not sure)"
         elif args.lyrics:
             if song not in lyrics:
