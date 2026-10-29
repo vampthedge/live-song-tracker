@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Follow a live concert recording through the band's studio recordings: which song, and where in it"
 readme = "README.md"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES"]
 requires-python = ">=3.11"
 dependencies = [
   "huggingface-hub>=0.36",

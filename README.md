@@ -77,6 +77,6 @@ uv run pytest
 ## License
 
 MIT, see [LICENSE](LICENSE). The model classes are adapted from
-[sizigi/PupuM2D](https://github.com/sizigi/PupuM2D) (MIT); please cite their paper,
+[sizigi/PupuM2D](https://github.com/sizigi/PupuM2D) (MIT, see [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES)); please cite their paper,
 [Frequency-Aware Self-Supervised Music Representation Learning](https://arxiv.org/abs/2606.25713),
 if you use this.
