@@ -28,6 +28,10 @@ A visual walkthrough with figures from a real concert: https://vampthedge.github
    evidence score for every studio stick of every song. Each step it shifts the evidence forward by
    3 s, multiplies it by 0.9 and adds the new window's scores. The right position scores well at
    the same shifted spot step after step; a wrong repeat does not.
+   Before adding, each song's background comes off its scores: its average score over all its
+   positions, averaged over the last ~2.5 min of show. A "hub" song that lines up a little with
+   everything in the room (a bass-heavy beat, a dense mix) has a high background; the true song
+   stands out from its own.
 5. **Gate.** A jump to another song, or more than 6 s away, has to beat the expected position by
    10%. Evidence divided by its total weight is the confidence; below 0.3 the pick is usually a
    "magnet", a studio stick that matches anything, and no lyric is shown.
@@ -49,9 +53,16 @@ Lock-in takes 2 to 6 steps after a song starts, up to 13 when the live intro dif
 studio one. The remaining misses are those first steps and live outros that run past the end of
 the studio song. Fitted tempo came out at 1.00 for every song, so live tempo is not the problem.
 
+On 31 fan-filmed YouTube concerts across pop, rock, Turkish, Latin, worship and hip hop (one per
+artist, chapter timestamps as the setlist, 10 s every 3 s), the background correction raised the
+share of steps naming the right song from 60.5% to 64.5%, and lowered confident wrong picks
+(confidence ≥ 0.25) from 5.7% to 3.5%. It helped most where one song had swallowed a show: a
+Kendrick Lamar set went from 37% to 58% right and from 33% to 7% confidently wrong.
+
 Tried and dropped: searching only near the last position (it parks on magnets for good), stretching
 the studio side 0.9 to 1.1 for tempo, penalizing magnet sticks by their average similarity to the
-library, and resetting evidence when the pooled best song disagrees.
+library (again on the 31 concerts: scoring each song against the other studio songs made right
+picks fall to 57%), and resetting evidence when the pooled best song disagrees.
 
 ## Install
 

@@ -209,7 +209,7 @@ live 5:45  <span class="hit">disposable_teens at 0:20</span> (20.5s) confidence 
       <ol class="list">
         <li>Shifts the evidence 6 sticks forward, because the concert moved on 3 s.</li>
         <li>Multiplies it by 0.9, so an old mistake fades within a few steps.</li>
-        <li>Adds the new window's alignment scores.</li>
+        <li>Adds the new window's alignment scores, minus each song's background: its average score over all positions, averaged over the last 2.5 minutes. A "hub" song that lines up a little with everything in the room, such as a bass-heavy beat, has a high background and stops winning by default.</li>
       </ol>
       <p>A wrong repeat scores high once, but its shifted evidence does not line up with where the next window scores high. The true position scores high at the same shifted spot step after step.</p>
       <figure>
@@ -246,6 +246,7 @@ live 5:45  <span class="hit">disposable_teens at 0:20</span> (20.5s) confidence 
     </table>
   </div>
   <p class="muted">With the 0.3 gate, 81 to 95% of correct picks are shown and 80 to 100% of wrong ones are hidden, on all five shows.</p>
+  <p>On 31 more fan-filmed YouTube concerts across six genres (one per artist, chapter timestamps as the setlist), the background correction raised the share of steps naming the right song from 60.5% to 64.5% and cut confident wrong picks (confidence 0.25 or more) from 5.7% to 3.5%. A Kendrick Lamar set, where two songs had swallowed the show, went from 37% to 58% right.</p>
 </section>
 
 <section aria-labelledby="limits">
@@ -256,7 +257,7 @@ live 5:45  <span class="hit">disposable_teens at 0:20</span> (20.5s) confidence 
     <li>Live outros that run past the end of the studio song park on a magnet until the next song starts.</li>
     <li>It recognizes the songs you give it. Covers, medleys and songs missing from the library are not found.</li>
     <li>PupuM2D-Large has 307M parameters. One 10 s window every 3 s runs comfortably on a laptop GPU or Apple silicon; CPU works but slowly.</li>
-    <li>Tried and dropped: searching only near the last position (it parks on magnets for good), stretching the studio side 0.9 to 1.1 for tempo, penalizing magnet sticks, and resetting evidence when the per-song score disagrees.</li>
+    <li>Tried and dropped: searching only near the last position (it parks on magnets for good), stretching the studio side 0.9 to 1.1 for tempo, penalizing magnet sticks or songs by how well they match the rest of the library (it made the 31 concerts worse), and resetting evidence when the per-song score disagrees.</li>
   </ul>
 </section>
 
