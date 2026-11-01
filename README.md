@@ -53,15 +53,15 @@ Lock-in takes 2 to 6 steps after a song starts, up to 13 when the live intro dif
 studio one. The remaining misses are those first steps and live outros that run past the end of
 the studio song. Fitted tempo came out at 1.00 for every song, so live tempo is not the problem.
 
-On 31 fan-filmed YouTube concerts across pop, rock, Turkish, Latin, worship and hip hop (one per
+On 32 fan-filmed YouTube concerts across pop, rock, Turkish, Latin, worship and hip hop (one per
 artist, chapter timestamps as the setlist, 10 s every 3 s), the background correction raised the
-share of steps naming the right song from 60.5% to 64.5%, and lowered confident wrong picks
+share of steps naming the right song from 61.5% to 64.4%, and lowered confident wrong picks
 (confidence ≥ 0.25) from 5.7% to 3.5%. It helped most where one song had swallowed a show: a
-Kendrick Lamar set went from 37% to 58% right and from 33% to 7% confidently wrong.
+Kendrick Lamar set went from 35% to 56% right and from 35% to 8% confidently wrong.
 
 Tried and dropped: searching only near the last position (it parks on magnets for good), stretching
 the studio side 0.9 to 1.1 for tempo, penalizing magnet sticks by their average similarity to the
-library (again on the 31 concerts: scoring each song against the other studio songs made right
+library (again on the YouTube concerts: scoring each song against the other studio songs made right
 picks fall to 57%), and resetting evidence when the pooled best song disagrees.
 
 ## Install

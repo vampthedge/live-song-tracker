@@ -15,13 +15,13 @@ from pathlib import Path
 from typing import NamedTuple
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 import torchaudio
 from huggingface_hub import hf_hub_download
 from safetensors import safe_open
 from timm.layers import create_rope_embed
 from timm.models.eva import EvaBlock
+from torch import nn
 from torchcodec.decoders import AudioDecoder
 
 WINDOW_SECONDS = 10  # the model was trained on 30 s inputs, so 10 s windows fit well inside
@@ -42,7 +42,7 @@ CONFIDENCE_NEEDED = 0.3  # below this the pick is usually a "magnet" stick that 
 JUMP_MARGIN = 0.1  # to jump more than 6 s away, the new pick's evidence must beat the expected spot's by this much
 # A "hub" song lines up a little with everything (a dense mix, a bass-heavy beat) and wins whenever the true song
 # scores low. Each song's background, its average score over all positions in recent windows, comes off its scores.
-# On 31 YouTube concerts (10 s every 3 s) this took right picks from 60.5% to 64.5% and shown-but-wrong at 0.25
+# On 32 YouTube concerts (10 s every 3 s) this took right picks from 61.5% to 64.4% and shown-but-wrong at 0.25
 # from 5.7% to 3.5%. Scoring each song against the other studio songs instead made both worse.
 HUB_WEIGHT = 1.0  # how much of the background comes off; 0 turns the correction off
 BACKGROUND_DECAY = 0.98  # how slowly a song's background forgets: about 50 steps, 2.5 min of show
@@ -204,8 +204,8 @@ def load_model(device=None):
     model = PupuM2DModel(cfg)
     state_dict = {}
     with safe_open(ckpt_path, framework="pt", device="cpu") as f:
-        for k in f.keys():
-            if k.startswith("patch_embed.") or k.startswith("teacher."):
+        for k in f.keys():  # noqa: SIM118 safetensors safe_open is not iterable
+            if k.startswith(("patch_embed.", "teacher.")):
                 state_dict[k] = f.get_tensor(k)
     model.load_state_dict(state_dict, strict=True)
     return model.train(False).to(device or default_device())  # inference mode
